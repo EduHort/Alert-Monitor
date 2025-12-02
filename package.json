@@ -1,0 +1,33 @@
+{
+  "name": "alert-monitor",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EduHort/Alert-Monitor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/EduHort/Alert-Monitor/issues"
+  },
+  "homepage": "https://github.com/EduHort/Alert-Monitor#readme",
+  "dependencies": {
+    "@google/genai": "^1.30.0",
+    "dotenv": "^17.2.3",
+    "nodemailer": "^7.0.11",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "ts-node": "^10.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/nodemailer": "^7.0.4",
+    "@types/sqlite3": "^5.1.0"
+  }
+}
