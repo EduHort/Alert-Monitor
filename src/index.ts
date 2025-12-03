@@ -3,6 +3,7 @@ import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import { GoogleGenAI } from '@google/genai';
 import nodemailer from 'nodemailer';
+import cron from 'node-cron';
 
 // --- CONFIGURAÇÃO ---
 const DB_FILENAME = 'monitor_oportunidades.db';
@@ -99,19 +100,18 @@ function gerarIdEstavel(fonteNome: string, titulo: string, prazo: string): strin
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9]/g, '');
 
-    // 2. Pega os primeiros 60 caracteres (impressão digital do texto)
+    // 2. Pega os primeiros 60 caracteres
     const slugTitulo = tituloLimpo.substring(0, 60);
 
     // 3. Normaliza Data (apenas números)
     const slugPrazo = prazo ? prazo.replace(/[^0-9]/g, '') : '0000';
 
-    // ID Final: ICLEI-analistadeclim-15122025
+    // ID Final
     return `${fonteNome}-${slugTitulo}-${slugPrazo}`;
 }
 
 async function consultarGemini(prompt: string): Promise<any[]> {
     try {
-        // Modelo Lite + Tools (Search & URL) mantidos
         const response = await ai.models.generateContent({
             model: 'models/gemini-flash-lite-latest',
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -170,102 +170,129 @@ async function enviarEmailResumo(oportunidades: Oportunidade[]) {
     }
 }
 
-// --- MAIN ---
-async function main() {
+// --- FUNÇÃO PRINCIPAL DE VERIFICAÇÃO ---
+async function checkSites() {
+    console.log(`\n🕒 [${new Date().toLocaleString()}] Iniciando ciclo de verificação...`);
+
+    // Abre conexão para este ciclo
     const db = await initDB();
     const novasOportunidades: Oportunidade[] = [];
 
-    // 1. IPEA
-    console.log("🤖 [1/4] IPEA...");
-    const dadosIPEA = await consultarGemini(`
-        Acesse: ${FONTE_IPEA.url}
-        Liste TODAS as Chamadas Públicas visíveis na lista.
-        Pegue apenas o título azul da chamada pública (ex: "Chamada Pública n° 56/2025", "Chamada Pública 057/2025").
-        Pegue o título igual ele está na lista.
-        Não filtre por status. Capture título completo.
-        Caso não haja nada listado, retorne um array vazio.
-        ${INSTRUCAO_JSON}
-    `);
+    try {
+        // 1. IPEA
+        console.log("🤖 [1/4] IPEA...");
+        const dadosIPEA = await consultarGemini(`
+            Acesse: ${FONTE_IPEA.url}
+            Liste TODAS as Chamadas Públicas visíveis na lista.
+            Pegue apenas o título azul da chamada pública (ex: "Chamada Pública n° 56/2025", "Chamada Pública 057/2025").
+            Pegue o título igual ele está na lista.
+            Não filtre por status. Capture título completo.
+            Caso não haja nada listado, retorne um array vazio.
+            ${INSTRUCAO_JSON}
+        `);
 
-    // 2. FNP
-    console.log("🤖 [2/4] FNP...");
-    const dadosFNP = await consultarGemini(`
-        Acesse: ${FONTE_FNP.url}
-        Liste TODOS os itens (Editais, TRs, Cotações, etc).
-        Ignore o Download. Cada Edital/TR/Cotação/etc tem um botão de Download.
-        Não filtre nada. Capture título completo.
-        Caso não haja nada listado, retorne um array vazio.
-        ${INSTRUCAO_JSON}
-    `);
+        // 2. FNP
+        console.log("🤖 [2/4] FNP...");
+        const dadosFNP = await consultarGemini(`
+            Acesse: ${FONTE_FNP.url}
+            Liste TODOS os itens (Editais, TRs, Cotações, etc).
+            Ignore o Download. Cada Edital/TR/Cotação/etc tem um botão de Download.
+            Não filtre nada. Capture título completo.
+            Caso não haja nada listado, retorne um array vazio.
+            ${INSTRUCAO_JSON}
+        `);
 
-    // 3. UNDP
-    console.log("🤖 [3/4] UNDP...");
-    const dadosUNDP = await consultarGemini(`
-        Acesse: ${FONTE_UNDP.url}
-        Liste TODAS as oportunidades/vagas/editais da página.
-        Não filtre por status. Capture título completo.
-        Caso não haja nada listado, retorne um array vazio.
-        ${INSTRUCAO_JSON}
-    `);
+        // 3. UNDP
+        console.log("🤖 [3/4] UNDP...");
+        const dadosUNDP = await consultarGemini(`
+            Acesse: ${FONTE_UNDP.url}
+            Liste TODAS as oportunidades/vagas/editais da página.
+            Não filtre por status. Capture título completo.
+            Caso não haja nada listado, retorne um array vazio.
+            ${INSTRUCAO_JSON}
+        `);
 
-    // 4. ICLEI (NOVO)
-    console.log("🤖 [4/4] ICLEI...");
-    const dadosICLEI = await consultarGemini(`
-        Acesse a página "Trabalhe Conosco" do ICLEI: ${FONTE_ICLEI.url}
-        
-        Sua tarefa: Listar TODAS as Vagas, Termos de Referência (TdR) ou Licitações listadas.
-        Não filtre por data ou status. Queremos tudo o que está na lista.
-        Capture o título completo no campo 'titulo'.
-        Capture a data de publicação ou prazo no campo 'prazo'.
+        // 4. ICLEI
+        console.log("🤖 [4/4] ICLEI...");
+        const dadosICLEI = await consultarGemini(`
+            Acesse a página "Trabalhe Conosco" do ICLEI: ${FONTE_ICLEI.url}
+            
+            Sua tarefa: Listar TODAS as Vagas, Termos de Referência (TdR) ou Licitações listadas.
+            Não filtre por data ou status. Queremos tudo o que está na lista.
+            Capture o título completo no campo 'titulo'.
+            Capture a data de publicação ou prazo no campo 'prazo'.
 
-        Caso não haja nada listado, retorne um array vazio.
-        
-        ${INSTRUCAO_JSON}
-    `);
+            Caso não haja nada listado, retorne um array vazio.
+            
+            ${INSTRUCAO_JSON}
+        `);
 
-    // Consolidação Geral
-    const todosResultados = [
-        { fonte: FONTE_IPEA, dados: dadosIPEA },
-        { fonte: FONTE_FNP, dados: dadosFNP },
-        { fonte: FONTE_UNDP, dados: dadosUNDP },
-        { fonte: FONTE_ICLEI, dados: dadosICLEI }
-    ];
+        // Consolidação Geral
+        const todosResultados = [
+            { fonte: FONTE_IPEA, dados: dadosIPEA },
+            { fonte: FONTE_FNP, dados: dadosFNP },
+            { fonte: FONTE_UNDP, dados: dadosUNDP },
+            { fonte: FONTE_ICLEI, dados: dadosICLEI }
+        ];
 
-    for (const grupo of todosResultados) {
-        for (const item of grupo.dados) {
+        for (const grupo of todosResultados) {
+            for (const item of grupo.dados) {
 
-            if (!item.titulo) continue;
+                if (!item.titulo) continue;
 
-            // Gera ID Estável
-            const idUnico = gerarIdEstavel(grupo.fonte.nome, item.titulo, item.prazo);
+                const idUnico = gerarIdEstavel(grupo.fonte.nome, item.titulo, item.prazo);
 
-            const existe = await db.get('SELECT id FROM oportunidades WHERE id = ?', idUnico);
-            if (!existe) {
-                console.log(`✨ [${grupo.fonte.nome}] DETECTADO: ${item.titulo.substring(0, 60)}...`);
+                const existe = await db.get('SELECT id FROM oportunidades WHERE id = ?', idUnico);
+                if (!existe) {
+                    console.log(`✨ [${grupo.fonte.nome}] DETECTADO: ${item.titulo.substring(0, 50)}...`);
 
-                await db.run('INSERT INTO oportunidades (id, projeto, prazo, fonte) VALUES (?, ?, ?, ?)',
-                    idUnico, item.titulo, item.prazo, grupo.fonte.nome);
+                    await db.run('INSERT INTO oportunidades (id, projeto, prazo, fonte) VALUES (?, ?, ?, ?)',
+                        idUnico, item.titulo, item.prazo, grupo.fonte.nome);
 
-                novasOportunidades.push({
-                    id_unico: idUnico,
-                    titulo: item.titulo,
-                    prazo: item.prazo,
-                    fonte_nome: grupo.fonte.nome,
-                    fonte_url: grupo.fonte.url,
-                    cor: grupo.fonte.cor
-                });
+                    novasOportunidades.push({
+                        id_unico: idUnico,
+                        titulo: item.titulo,
+                        prazo: item.prazo,
+                        fonte_nome: grupo.fonte.nome,
+                        fonte_url: grupo.fonte.url,
+                        cor: grupo.fonte.cor
+                    });
+                }
             }
         }
-    }
 
-    if (novasOportunidades.length > 0) {
-        console.log(`📤 Enviando email com ${novasOportunidades.length} novos itens...`);
-        await enviarEmailResumo(novasOportunidades);
-    } else {
-        console.log("✅ Nenhuma alteração detectada.");
-    }
+        if (novasOportunidades.length > 0) {
+            console.log(`📤 Enviando email com ${novasOportunidades.length} novos itens...`);
+            await enviarEmailResumo(novasOportunidades);
+        } else {
+            console.log("✅ Ciclo finalizado. Nenhuma alteração detectada.");
+        }
 
-    await db.close();
+    } catch (error) {
+        console.error("❌ Erro fatal durante o ciclo de verificação:", error);
+    } finally {
+        // Garante que o banco fecha mesmo se der erro
+        await db.close();
+    }
+}
+
+// --- SERVIÇO DE AGENDAMENTO ---
+async function main() {
+    console.log("🚀 Serviço de Monitoramento de Editais Iniciado.");
+
+    // Executa imediatamente ao iniciar (para não esperar 2h pelo primeiro teste)
+    await checkSites();
+
+    // Agenda para rodar a cada 2 horas (Minuto 0, a cada 2 horas: 0, 2, 4...)
+    cron.schedule('0 */2 * * *', async () => {
+        try {
+            await checkSites();
+        } catch (err) {
+            console.error("Erro no Cron Job:", err);
+        }
+    });
+
+    console.log("⏳ Agendado para rodar a cada 2 horas.");
 }
 
 main();
