@@ -9,31 +9,42 @@ const DB_FILENAME = 'monitor_oportunidades.db';
 
 const FONTE_IPEA = {
     nome: 'IPEA',
-    url: 'https://www.ipea.gov.br/portal/bolsas-de-pesquisa'
+    url: 'https://www.ipea.gov.br/portal/bolsas-de-pesquisa',
+    cor: '#2980b9' // Azul
 };
 
 const FONTE_FNP = {
     nome: 'FNP',
-    url: 'https://fnp.org.br/transparencia/documentos?cat=37'
+    url: 'https://fnp.org.br/transparencia/documentos?cat=37',
+    cor: '#e67e22' // Laranja
 };
 
-// --- PADRONIZAÇÃO DE FORMATO (JSON) ---
+const FONTE_UNDP = {
+    nome: 'UNDP',
+    url: 'https://parceiros.undp.org.br/opportunities',
+    cor: '#27ae60' // Verde
+};
+
+const FONTE_ICLEI = {
+    nome: 'ICLEI',
+    url: 'https://americadosul.iclei.org/trabalhe-conosco/?cat=15',
+    cor: '#8e44ad' // Roxo
+};
+
+// --- INSTRUÇÃO PADRÃO ---
 const INSTRUCAO_JSON = `
-    Retorne APENAS um Array JSON puro (sem markdown, sem texto introdutório).
-    Use EXATAMENTE as chaves abaixo para os objetos:
+    Retorne APENAS um Array JSON puro.
+    Estrutura obrigatória:
     [
       {
-        "numero": "O identificador (ex: Edital 01/2025, TR 10/2025, Chamada 03...)",
-        "projeto": "Título resumido do projeto ou vaga",
-        "prazo": "Para IPEA: prazo de inscrição. Para FNP: data de publicação (ex: 'Publ. 10/11/2025')"
+        "titulo": "O título completo e exato como aparece na lista.",
+        "prazo": "Qualquer data associada (prazo, publicação ou validade)."
       }
     ]
 `;
 
-// Inicializa o Client do Gemini
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Configuração do Email
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -44,11 +55,11 @@ const transporter = nodemailer.createTransport({
 
 interface Oportunidade {
     id_unico: string;
-    numero: string;
-    projeto: string;
+    titulo: string;
     prazo: string;
     fonte_nome: string;
     fonte_url: string;
+    cor: string;
 }
 
 // --- BANCO DE DADOS ---
@@ -66,26 +77,41 @@ async function initDB(): Promise<Database> {
     return db;
 }
 
-// --- FUNÇÃO DE LIMPEZA DO JSON ---
+// --- UTILITÁRIOS ---
 function extrairJson(text: string): any[] {
     try {
         let limpo = text.replace(/```json/g, '').replace(/```/g, '').trim();
         const inicio = limpo.indexOf('[');
         const fim = limpo.lastIndexOf(']');
-
         if (inicio === -1 || fim === -1) return [];
-
         limpo = limpo.substring(inicio, fim + 1);
         return JSON.parse(limpo);
     } catch (e) {
-        console.error("⚠️ Erro ao limpar/parsear JSON:", e);
+        console.error("⚠️ Erro ao parsear JSON:", e);
         return [];
     }
 }
 
-// --- CONSULTA GEMINI ---
+function gerarIdEstavel(fonteNome: string, titulo: string, prazo: string): string {
+    // 1. Normaliza Título
+    const tituloLimpo = titulo
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
+
+    // 2. Pega os primeiros 60 caracteres (impressão digital do texto)
+    const slugTitulo = tituloLimpo.substring(0, 60);
+
+    // 3. Normaliza Data (apenas números)
+    const slugPrazo = prazo ? prazo.replace(/[^0-9]/g, '') : '0000';
+
+    // ID Final: ICLEI-analistadeclim-15122025
+    return `${fonteNome}-${slugTitulo}-${slugPrazo}`;
+}
+
 async function consultarGemini(prompt: string): Promise<any[]> {
     try {
+        // Modelo Lite + Tools (Search & URL) mantidos
         const response = await ai.models.generateContent({
             model: 'models/gemini-flash-lite-latest',
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -98,32 +124,26 @@ async function consultarGemini(prompt: string): Promise<any[]> {
         });
 
         const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) return [];
-
-        return extrairJson(text);
+        return text ? extrairJson(text) : [];
     } catch (e) {
-        console.error("Erro na API Gemini:", e);
+        console.error("Erro API Gemini:", e);
         return [];
     }
 }
 
-// --- ENVIO DE EMAIL ---
+// --- EMAIL ---
 async function enviarEmailResumo(oportunidades: Oportunidade[]) {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) {
-        console.warn("⚠️ Email não configurado.");
-        return;
-    }
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) return;
 
     const itensHtml = oportunidades.map(op => `
         <li style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
-            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; color: #fff; background-color: ${op.fonte_nome === 'IPEA' ? '#2980b9' : '#e67e22'}; padding: 2px 6px; display: inline-block; border-radius: 3px; margin-bottom: 5px;">
+            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; color: #fff; background-color: ${op.cor}; padding: 2px 6px; display: inline-block; border-radius: 3px; margin-bottom: 5px;">
                 ${op.fonte_nome}
             </div>
-            <div style="font-size: 16px; font-weight: bold; color: #333;">${op.numero}</div>
-            <div style="color: #555; margin: 5px 0;">${op.projeto}</div>
-            <div style="font-size: 0.9em; color: #777;">📅 ${op.prazo}</div>
+            <div style="font-size: 14px; font-weight: bold; color: #333;">${op.titulo}</div>
+            <div style="font-size: 0.9em; color: #777; margin-top: 4px;">📅 ${op.prazo}</div>
             <div style="margin-top: 5px;">
-                <a href="${op.fonte_url}" style="font-size: 12px; color: ${op.fonte_nome === 'IPEA' ? '#2980b9' : '#e67e22'}; text-decoration: none;">➜ Ver na fonte</a>
+                <a href="${op.fonte_url}" style="font-size: 12px; color: ${op.cor}; text-decoration: none; font-weight: bold;">➜ Ver na fonte</a>
             </div>
         </li>
     `).join('');
@@ -131,12 +151,13 @@ async function enviarEmailResumo(oportunidades: Oportunidade[]) {
     const mailOptions = {
         from: `"Monitor de Editais" <${process.env.EMAIL_USER}>`,
         to: process.env.EMAIL_TO,
-        subject: `🔔 ${oportunidades.length} Novas Oportunidades Encontradas`,
+        subject: `🔔 ${oportunidades.length} Novos Itens Detectados`,
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px;">
                 <h2 style="color: #2c3e50;">Novas Oportunidades</h2>
+                <p style="font-size: 13px; color: #666;">Novos itens encontrados nas listas monitoradas:</p>
                 <ul style="list-style: none; padding-left: 0;">${itensHtml}</ul>
-                <p style="font-size: 12px; color: #888;">Monitoramento Gemini AI.</p>
+                <p style="font-size: 12px; color: #888;">Monitoramento via Gemini Flash Lite.</p>
             </div>
         `
     };
@@ -149,95 +170,99 @@ async function enviarEmailResumo(oportunidades: Oportunidade[]) {
     }
 }
 
-// --- FLUXO PRINCIPAL ---
+// --- MAIN ---
 async function main() {
     const db = await initDB();
     const novasOportunidades: Oportunidade[] = [];
 
-    // ===============================================
-    // 1. IPEA (Filtra por Prazo Aberto)
-    // ===============================================
-    console.log("🤖 Analisando IPEA...");
-    const promptIPEA = `
+    // 1. IPEA
+    console.log("🤖 [1/4] IPEA...");
+    const dadosIPEA = await consultarGemini(`
         Acesse: ${FONTE_IPEA.url}
-        Identifique Chamadas Públicas com inscrições ABERTAS.
-        Ignore chamadas com prazo encerrado.
+        Liste TODAS as Chamadas Públicas visíveis na lista.
+        Pegue apenas o título azul da chamada pública (ex: "Chamada Pública n° 56/2025", "Chamada Pública 057/2025").
+        Pegue o título igual ele está na lista.
+        Não filtre por status. Capture título completo.
+        Caso não haja nada listado, retorne um array vazio.
         ${INSTRUCAO_JSON}
-    `;
-    const dadosIPEA = await consultarGemini(promptIPEA);
+    `);
 
-    for (const item of dadosIPEA) {
-        if (!item.numero) continue;
-        const idUnico = `IPEA-${item.numero}`;
-
-        const existe = await db.get('SELECT id FROM oportunidades WHERE id = ?', idUnico);
-        if (!existe) {
-            console.log(`✨ [IPEA] NOVO: ${item.numero}`);
-            await db.run('INSERT INTO oportunidades (id, projeto, prazo, fonte) VALUES (?, ?, ?, ?)',
-                idUnico, item.projeto, item.prazo, 'IPEA');
-
-            novasOportunidades.push({
-                id_unico: idUnico,
-                numero: item.numero,
-                projeto: item.projeto,
-                prazo: item.prazo,
-                fonte_nome: FONTE_IPEA.nome,
-                fonte_url: FONTE_IPEA.url
-            });
-        }
-    }
-
-    // ===============================================
-    // 2. FNP (Filtra por Status Textual)
-    // ===============================================
-    console.log("🤖 Analisando FNP...");
-    const promptFNP = `
+    // 2. FNP
+    console.log("🤖 [2/4] FNP...");
+    const dadosFNP = await consultarGemini(`
         Acesse: ${FONTE_FNP.url}
+        Liste TODOS os itens (Editais, TRs, Cotações, etc).
+        Ignore o Download. Cada Edital/TR/Cotação/etc tem um botão de Download.
+        Não filtre nada. Capture título completo.
+        Caso não haja nada listado, retorne um array vazio.
+        ${INSTRUCAO_JSON}
+    `);
+
+    // 3. UNDP
+    console.log("🤖 [3/4] UNDP...");
+    const dadosUNDP = await consultarGemini(`
+        Acesse: ${FONTE_UNDP.url}
+        Liste TODAS as oportunidades/vagas/editais da página.
+        Não filtre por status. Capture título completo.
+        Caso não haja nada listado, retorne um array vazio.
+        ${INSTRUCAO_JSON}
+    `);
+
+    // 4. ICLEI (NOVO)
+    console.log("🤖 [4/4] ICLEI...");
+    const dadosICLEI = await consultarGemini(`
+        Acesse a página "Trabalhe Conosco" do ICLEI: ${FONTE_ICLEI.url}
         
-        Liste: Termos de Referência (TR), Editais, Cotações, Processos Seletivos ou outros.
-        
-        REGRAS DE FILTRO:
-        1. Verifique o texto ao lado ou abaixo de cada item.
-        2. Se contiver palavras como "Encerrado", "Finalizado" ou "Concluído", IGNORE este item.
-        3. Queremos apenas itens que parecem estar ABERTOS ou que foram lançados muito recentemente e não têm aviso de encerramento.
-        
-        CAMPO 'PRAZO':
-        Como não há data limite explícita, capture a Data de Publicação e retorne no formato: "Publicado em dd/mm/aaaa".
+        Sua tarefa: Listar TODAS as Vagas, Termos de Referência (TdR) ou Licitações listadas.
+        Não filtre por data ou status. Queremos tudo o que está na lista.
+        Capture o título completo no campo 'titulo'.
+        Capture a data de publicação ou prazo no campo 'prazo'.
+
+        Caso não haja nada listado, retorne um array vazio.
         
         ${INSTRUCAO_JSON}
-    `;
+    `);
 
-    const dadosFNP = await consultarGemini(promptFNP);
+    // Consolidação Geral
+    const todosResultados = [
+        { fonte: FONTE_IPEA, dados: dadosIPEA },
+        { fonte: FONTE_FNP, dados: dadosFNP },
+        { fonte: FONTE_UNDP, dados: dadosUNDP },
+        { fonte: FONTE_ICLEI, dados: dadosICLEI }
+    ];
 
-    for (const item of dadosFNP) {
-        if (!item.numero) continue;
-        const idUnico = `FNP-${item.numero}`;
+    for (const grupo of todosResultados) {
+        for (const item of grupo.dados) {
 
-        const existe = await db.get('SELECT id FROM oportunidades WHERE id = ?', idUnico);
-        if (!existe) {
-            console.log(`✨ [FNP] NOVO: ${item.numero}`);
-            await db.run('INSERT INTO oportunidades (id, projeto, prazo, fonte) VALUES (?, ?, ?, ?)',
-                idUnico, item.projeto, item.prazo, 'FNP');
+            if (!item.titulo) continue;
 
-            novasOportunidades.push({
-                id_unico: idUnico,
-                numero: item.numero,
-                projeto: item.projeto,
-                prazo: item.prazo,
-                fonte_nome: FONTE_FNP.nome,
-                fonte_url: FONTE_FNP.url
-            });
+            // Gera ID Estável
+            const idUnico = gerarIdEstavel(grupo.fonte.nome, item.titulo, item.prazo);
+
+            const existe = await db.get('SELECT id FROM oportunidades WHERE id = ?', idUnico);
+            if (!existe) {
+                console.log(`✨ [${grupo.fonte.nome}] DETECTADO: ${item.titulo.substring(0, 60)}...`);
+
+                await db.run('INSERT INTO oportunidades (id, projeto, prazo, fonte) VALUES (?, ?, ?, ?)',
+                    idUnico, item.titulo, item.prazo, grupo.fonte.nome);
+
+                novasOportunidades.push({
+                    id_unico: idUnico,
+                    titulo: item.titulo,
+                    prazo: item.prazo,
+                    fonte_nome: grupo.fonte.nome,
+                    fonte_url: grupo.fonte.url,
+                    cor: grupo.fonte.cor
+                });
+            }
         }
     }
 
-    // ===============================================
-    // 3. ENVIO CONSOLIDADO
-    // ===============================================
     if (novasOportunidades.length > 0) {
-        console.log(`📤 Enviando email com ${novasOportunidades.length} itens...`);
+        console.log(`📤 Enviando email com ${novasOportunidades.length} novos itens...`);
         await enviarEmailResumo(novasOportunidades);
     } else {
-        console.log("✅ Nenhuma novidade encontrada.");
+        console.log("✅ Nenhuma alteração detectada.");
     }
 
     await db.close();
