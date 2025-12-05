@@ -196,8 +196,9 @@ async function checkSites() {
         const dadosFNP = await consultarGemini(`
             Acesse: ${FONTE_FNP.url}
             Liste TODOS os itens (Editais, TRs, Cotações, etc).
-            Ignore o Download. Cada Edital/TR/Cotação/etc tem um botão de Download.
-            Não filtre nada. Capture título completo.
+            Ignore o botão de Download azul e qualquer conteúdo dentro dele.
+            Não filtre nada. Capture apenas o título inteiro e a data.
+            O título está em cima da data.
             Caso não haja nada listado, retorne um array vazio.
             ${INSTRUCAO_JSON}
         `);
