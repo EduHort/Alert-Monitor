@@ -188,6 +188,7 @@ async function checkSites() {
             Pegue o título igual ele está na lista.
             Não filtre por status. Capture título completo.
             Caso não haja nada listado, retorne um array vazio.
+            NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
             ${INSTRUCAO_JSON}
         `);
 
@@ -200,6 +201,7 @@ async function checkSites() {
             Não filtre nada. Capture apenas o título inteiro e a data.
             O título está em cima da data.
             Caso não haja nada listado, retorne um array vazio.
+            NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
             ${INSTRUCAO_JSON}
         `);
 
@@ -210,6 +212,7 @@ async function checkSites() {
             Liste TODAS as oportunidades/vagas/editais da página.
             Não filtre por status. Capture título completo.
             Caso não haja nada listado, retorne um array vazio.
+            NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
             ${INSTRUCAO_JSON}
         `);
 
@@ -224,7 +227,7 @@ async function checkSites() {
             Capture a data de publicação ou prazo no campo 'prazo'.
 
             Caso não haja nada listado, retorne um array vazio.
-            
+            NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
             ${INSTRUCAO_JSON}
         `);
 
