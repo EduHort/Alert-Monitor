@@ -46,6 +46,7 @@ const INSTRUCAO_JSON = `
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// Configuração do Gmail (Nodemailer)
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -133,7 +134,14 @@ async function consultarGemini(prompt: string): Promise<any[]> {
 
 // --- EMAIL ---
 async function enviarEmailResumo(oportunidades: Oportunidade[]) {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) return;
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) {
+        console.warn("⚠️ Configurações de email faltando no .env");
+        return;
+    }
+
+    // Separa a string do .env por vírgula e remove espaços extras
+    // Ex: "email1@teste.com, email2@teste.com" vira ["email1@teste.com", "email2@teste.com"]
+    const listaDestinatarios = process.env.EMAIL_TO.split(',').map(email => email.trim());
 
     const itensHtml = oportunidades.map(op => `
         <li style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
@@ -150,7 +158,7 @@ async function enviarEmailResumo(oportunidades: Oportunidade[]) {
 
     const mailOptions = {
         from: `"Monitor de Editais" <${process.env.EMAIL_USER}>`,
-        to: process.env.EMAIL_TO,
+        to: listaDestinatarios,
         subject: `🔔 ${oportunidades.length} Novos Itens Detectados`,
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px;">
@@ -163,8 +171,9 @@ async function enviarEmailResumo(oportunidades: Oportunidade[]) {
     };
 
     try {
-        await transporter.sendMail(mailOptions);
-        console.log(`📧 Email enviado.`);
+        const info = await transporter.sendMail(mailOptions);
+        console.log(`📧 Email enviado para: ${listaDestinatarios.join(', ')}`);
+        // console.log("ID do envio:", info.messageId);
     } catch (error) {
         console.error(`❌ Erro email:`, error);
     }
@@ -287,8 +296,8 @@ async function main() {
     // Executa imediatamente ao iniciar (para não esperar 2h pelo primeiro teste)
     await checkSites();
 
-    // Agenda para rodar a cada 2 horas (Minuto 0, a cada 2 horas: 0, 2, 4...)
-    cron.schedule('0 */2 * * *', async () => {
+    // Agenda para rodar a cada 6 horas (Minuto 0, a cada 6 horas: 0, 6, 12...)
+    cron.schedule('0 */6 * * *', async () => {
         try {
             await checkSites();
         } catch (err) {
@@ -296,7 +305,7 @@ async function main() {
         }
     });
 
-    console.log("⏳ Agendado para rodar a cada 2 horas.");
+    console.log("⏳ Agendado para rodar a cada 6 horas.");
 }
 
 main();
