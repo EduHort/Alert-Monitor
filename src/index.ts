@@ -35,6 +35,10 @@ const FONTE_ICLEI = {
 // --- INSTRUÇÃO PADRÃO ---
 const INSTRUCAO_JSON = `
     Retorne APENAS um Array JSON puro.
+
+    Analise apenas a primeira página, ou seja, a página que aparece quando o site é aberto.
+    Não navegue para páginas 2, 3, "Pŕoxima" ou similares.
+
     Estrutura obrigatória:
     [
       {
@@ -114,7 +118,7 @@ function gerarIdEstavel(fonteNome: string, titulo: string, prazo: string): strin
 async function consultarGemini(prompt: string): Promise<any[]> {
     try {
         const response = await ai.models.generateContent({
-            model: 'models/gemini-flash-lite-latest',
+            model: 'models/gemini-flash-latest',
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: {
                 tools: [
@@ -134,46 +138,62 @@ async function consultarGemini(prompt: string): Promise<any[]> {
 
 // --- EMAIL ---
 async function enviarEmailResumo(oportunidades: Oportunidade[]) {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) {
-        console.warn("⚠️ Configurações de email faltando no .env");
-        return;
-    }
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_TO) return;
 
-    // Separa a string do .env por vírgula e remove espaços extras
-    // Ex: "email1@teste.com, email2@teste.com" vira ["email1@teste.com", "email2@teste.com"]
+    // 1. Agrupar oportunidades por Fonte
+    const resumoPorFonte = new Map<string, { nome: string, url: string, cor: string, qtd: number }>();
+
+    oportunidades.forEach(op => {
+        if (!resumoPorFonte.has(op.fonte_nome)) {
+            resumoPorFonte.set(op.fonte_nome, {
+                nome: op.fonte_nome,
+                url: op.fonte_url,
+                cor: op.cor,
+                qtd: 0
+            });
+        }
+        resumoPorFonte.get(op.fonte_nome)!.qtd++;
+    });
+
+    // 2. Criar HTML simplificado (Card por Fonte)
+    let htmlBlocos = '';
+    resumoPorFonte.forEach((dados) => {
+        htmlBlocos += `
+            <div style="border-left: 6px solid ${dados.cor}; padding: 15px; margin-bottom: 20px; background-color: #f8f9fa; border-radius: 4px;">
+                <h3 style="margin: 0 0 5px 0; color: ${dados.cor};">${dados.nome}</h3>
+                <p style="margin: 0 0 10px 0; font-size: 14px; color: #555;">
+                    Novos editais/vagas encontrados: <strong>${dados.qtd}</strong>
+                </p>
+                <a href="${dados.url}" style="background-color: ${dados.cor}; color: #fff; text-decoration: none; padding: 8px 15px; border-radius: 4px; font-size: 13px; font-weight: bold; display: inline-block;">
+                    Acessar Site do ${dados.nome}
+                </a>
+            </div>
+        `;
+    });
+
+    // 3. Preparar envio
     const listaDestinatarios = process.env.EMAIL_TO.split(',').map(email => email.trim());
-
-    const itensHtml = oportunidades.map(op => `
-        <li style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
-            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; color: #fff; background-color: ${op.cor}; padding: 2px 6px; display: inline-block; border-radius: 3px; margin-bottom: 5px;">
-                ${op.fonte_nome}
-            </div>
-            <div style="font-size: 14px; font-weight: bold; color: #333;">${op.titulo}</div>
-            <div style="font-size: 0.9em; color: #777; margin-top: 4px;">📅 ${op.prazo}</div>
-            <div style="margin-top: 5px;">
-                <a href="${op.fonte_url}" style="font-size: 12px; color: ${op.cor}; text-decoration: none; font-weight: bold;">➜ Ver na fonte</a>
-            </div>
-        </li>
-    `).join('');
 
     const mailOptions = {
         from: `"Monitor de Editais" <${process.env.EMAIL_USER}>`,
         to: listaDestinatarios,
-        subject: `🔔 ${oportunidades.length} Novos Itens Detectados`,
+        subject: `🔔 Novas Oportunidades Detectadas`,
         html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px;">
-                <h2 style="color: #2c3e50;">Novas Oportunidades</h2>
-                <p style="font-size: 13px; color: #666;">Novos itens encontrados nas listas monitoradas:</p>
-                <ul style="list-style: none; padding-left: 0;">${itensHtml}</ul>
-                <p style="font-size: 12px; color: #888;">Monitoramento via Gemini Flash Lite.</p>
+            <div style="font-family: Arial, sans-serif; max-width: 600px; color: #333;">
+                <h2 style="color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px;">Atualização de Monitoramento</h2>
+                <p>O sistema detectou novas publicações nos seguintes sites:</p>
+                
+                ${htmlBlocos}
+
+                <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
+                <p style="font-size: 12px; color: #888;">Monitoramento automático Gemini AI.</p>
             </div>
         `
     };
 
     try {
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`📧 Email enviado para: ${listaDestinatarios.join(', ')}`);
-        // console.log("ID do envio:", info.messageId);
+        await transporter.sendMail(mailOptions);
+        console.log(`📧 Email simplificado enviado para: ${listaDestinatarios.join(', ')}`);
     } catch (error) {
         console.error(`❌ Erro email:`, error);
     }
