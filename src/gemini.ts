@@ -3,14 +3,31 @@ import { GoogleGenAI, UrlRetrievalStatus } from '@google/genai';
 import { Fonte, ItemBruto } from './tipos';
 
 const GEMINI_MODEL = 'models/gemini-flash-latest';
-const GEMINI_TIMEOUT_MS = 120_000;
+const TENTATIVAS_API = 3; // Inclui a chamada original
+
+/**
+ * Orçamento de tempo para a consulta INTEIRA, somando todas as tentativas —
+ * o SDK monta um único AbortController antes do laço de retry, então este
+ * prazo não reinicia a cada tentativa. Precisa ser folgado o bastante para
+ * caber uma repetição depois de um 504 demorado.
+ */
+const GEMINI_TIMEOUT_MS = 300_000;
+
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_CARACTERES_PAGINA = 100_000; // Corta páginas gigantes antes de mandar para a IA
 
 // Criado sob demanda para que a validação do ambiente rode antes.
 let cliente: GoogleGenAI | null = null;
 function ia(): GoogleGenAI {
-    if (!cliente) cliente = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    if (!cliente) {
+        cliente = new GoogleGenAI({
+            apiKey: process.env.GEMINI_API_KEY,
+            // Sem retryOptions o SDK faz um fetch simples e desiste no primeiro erro.
+            // Com ele, repete 408/429/500/502/503/504 com backoff exponencial —
+            // é onde cai o DEADLINE_EXCEEDED que o urlContext costuma devolver.
+            httpOptions: { retryOptions: { attempts: TENTATIVAS_API } }
+        });
+    }
     return cliente;
 }
 
