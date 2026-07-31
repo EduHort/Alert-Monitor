@@ -2,12 +2,20 @@ import 'dotenv/config';
 import cron from 'node-cron';
 import { Fonte, Oportunidade, Falha } from './tipos';
 import { initDB, registrarItens, buscarPendentes, marcarNotificadas, limparAntigas } from './db';
-import { lerFonte } from './gemini';
+import { lerFonte, dormir } from './gemini';
 import { enviarEmails, verificarConexao, EMAIL_CLIENTS, EMAIL_ADMIN } from './email';
 
 // --- CONFIGURAÇÃO ---
 const CRON_EXPRESSION = '0 */6 * * *'; // A cada 6 horas
 const TIMEZONE = 'America/Sao_Paulo';
+
+/**
+ * As fontes são consultadas uma de cada vez, com esta pausa entre elas.
+ * Disparar as 6 juntas estourava a cota por minuto da API do Gemini e
+ * derrubava várias (às vezes todas) com 429. O ciclo roda de 6 em 6 horas,
+ * então demorar alguns minutos a mais não custa nada.
+ */
+const PAUSA_ENTRE_FONTES_MS = 15_000;
 
 const FONTES: Fonte[] = [
     {
@@ -133,22 +141,20 @@ async function checkSites(): Promise<void> {
     const falhas: Falha[] = [];
 
     try {
-        console.log(`🤖 Consultando ${FONTES.length} fontes em paralelo...`);
-        const resultados = await Promise.allSettled(FONTES.map(fonte => lerFonte(fonte)));
+        console.log(`🤖 Consultando ${FONTES.length} fontes em sequência...`);
 
-        for (let i = 0; i < FONTES.length; i++) {
-            const fonte = FONTES[i];
-            const resultado = resultados[i];
+        for (const [indice, fonte] of FONTES.entries()) {
+            if (indice > 0) await dormir(PAUSA_ENTRE_FONTES_MS);
 
-            if (resultado.status === 'rejected') {
-                const erro = resultado.reason instanceof Error ? resultado.reason.message : String(resultado.reason);
+            try {
+                const itens = await lerFonte(fonte);
+                const novos = await registrarItens(db, fonte, itens);
+                console.log(`✅ [${fonte.nome}] ${itens.length} item(ns) lido(s), ${novos} novo(s).`);
+            } catch (excecao) {
+                const erro = excecao instanceof Error ? excecao.message : String(excecao);
                 console.error(`❌ [${fonte.nome}] falhou: ${erro}`);
                 falhas.push({ fonte: fonte.nome, erro });
-                continue;
             }
-
-            const novos = await registrarItens(db, fonte, resultado.value);
-            console.log(`✅ [${fonte.nome}] ${resultado.value.length} item(ns) lido(s), ${novos} novo(s).`);
         }
 
         const pendentes: Oportunidade[] = (await buscarPendentes(db)).map(p => ({

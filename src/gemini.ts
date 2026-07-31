@@ -3,32 +3,37 @@ import { GoogleGenAI, UrlRetrievalStatus } from '@google/genai';
 import { Fonte, ItemBruto } from './tipos';
 
 const GEMINI_MODEL = 'models/gemini-flash-latest';
-const TENTATIVAS_API = 3; // Inclui a chamada original
-
-/**
- * Orçamento de tempo para a consulta INTEIRA, somando todas as tentativas —
- * o SDK monta um único AbortController antes do laço de retry, então este
- * prazo não reinicia a cada tentativa. Precisa ser folgado o bastante para
- * caber uma repetição depois de um 504 demorado.
- */
-const GEMINI_TIMEOUT_MS = 300_000;
-
+const GEMINI_TIMEOUT_MS = 120_000; // Por tentativa: cada retentativa cria um sinal novo
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_CARACTERES_PAGINA = 100_000; // Corta páginas gigantes antes de mandar para a IA
 
-// Criado sob demanda para que a validação do ambiente rode antes.
+const TENTATIVAS = 3;            // Inclui a chamada original
+const ESPERA_BASE_MS = 30_000;   // Espera antes de repetir: 30s, depois 60s
+
+/**
+ * O retry do próprio SDK não serve aqui: ele só aceita o número de tentativas
+ * e usa backoff de 1s e 2s, curto demais para cota por minuto — repetir um 429
+ * um segundo depois cai na mesma janela e só gasta cota. Ele também troca o
+ * corpo do erro por um "Retryable HTTP Error", escondendo qual cota estourou.
+ * Por isso o cliente vai sem retryOptions e a repetição é feita abaixo.
+ */
 let cliente: GoogleGenAI | null = null;
 function ia(): GoogleGenAI {
-    if (!cliente) {
-        cliente = new GoogleGenAI({
-            apiKey: process.env.GEMINI_API_KEY,
-            // Sem retryOptions o SDK faz um fetch simples e desiste no primeiro erro.
-            // Com ele, repete 408/429/500/502/503/504 com backoff exponencial —
-            // é onde cai o DEADLINE_EXCEEDED que o urlContext costuma devolver.
-            httpOptions: { retryOptions: { attempts: TENTATIVAS_API } }
-        });
-    }
+    if (!cliente) cliente = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     return cliente;
+}
+
+export const dormir = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
+function mensagemDoErro(erro: unknown): string {
+    return erro instanceof Error ? erro.message : String(erro);
+}
+
+// Só repete o que tem chance de melhorar sozinho: cota e indisponibilidade
+// temporária. Erro de chave inválida ou página inacessível não entra aqui.
+function ehTransitorio(erro: unknown): boolean {
+    return /(RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|INTERNAL|Too Many Requests|Service Unavailable|Gateway Timeout|Retryable HTTP Error|(?:"code"\s*:\s*|HTTP )(?:408|429|500|502|503|504))/i
+        .test(mensagemDoErro(erro));
 }
 
 // --- PROMPTS ---
@@ -135,10 +140,33 @@ function extrairJson(text: string): ItemBruto[] {
 }
 
 /**
- * Lê uma fonte. Sites que bloqueiam o buscador do Google têm o HTML baixado
- * aqui e mandado como texto; o resto vai pelo urlContext.
+ * Lê uma fonte, repetindo com espera longa em erro transitório.
+ * Sites que bloqueiam o buscador do Google têm o HTML baixado aqui e mandado
+ * como texto; o resto vai pelo urlContext.
  */
 export async function lerFonte(fonte: Fonte): Promise<ItemBruto[]> {
+    let ultimoErro: unknown;
+
+    for (let tentativa = 1; tentativa <= TENTATIVAS; tentativa++) {
+        try {
+            return await lerFonteUmaVez(fonte);
+        } catch (erro) {
+            ultimoErro = erro;
+            if (tentativa === TENTATIVAS || !ehTransitorio(erro)) break;
+
+            const espera = ESPERA_BASE_MS * tentativa;
+            console.warn(
+                `⏳ [${fonte.nome}] ${mensagemDoErro(erro)} — repetindo em ${espera / 1000}s ` +
+                `(tentativa ${tentativa + 1} de ${TENTATIVAS})`
+            );
+            await dormir(espera);
+        }
+    }
+
+    throw ultimoErro;
+}
+
+async function lerFonteUmaVez(fonte: Fonte): Promise<ItemBruto[]> {
     if (fonte.baixarHtml) {
         const texto = await baixarTexto(fonte.url);
         return consultarGemini(montarPromptComTexto(fonte, texto), false);
