@@ -7,8 +7,8 @@ const GEMINI_TIMEOUT_MS = 120_000; // Por tentativa: cada retentativa cria um si
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_CARACTERES_PAGINA = 100_000; // Corta páginas gigantes antes de mandar para a IA
 
-const TENTATIVAS = 3;            // Inclui a chamada original
-const ESPERA_BASE_MS = 30_000;   // Espera antes de repetir: 30s, depois 60s
+const TENTATIVAS = 2;            // Inclui a chamada original
+const ESPERA_BASE_MS = 60_000;   // Espera antes de repetir: 60s
 
 /**
  * O retry do próprio SDK não serve aqui: ele só aceita o número de tentativas
