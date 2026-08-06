@@ -46,22 +46,43 @@ npm start       # produção (node dist/index.js)
 O primeiro ciclo roda assim que o processo sobe; depois disso o cron assume
 (`0 */6 * * *`, fuso `America/Sao_Paulo`). Requer Node 18 ou superior.
 
-### Em produção com pm2
+### Em produção com pm2 (primeira execução)
 
 ```bash
-npm ci             # instala e compila o sqlite3 (módulo nativo)
-cp .env_example .env && nano .env
-npm run build
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup        # execute o comando que ele imprimir
+npm ci && cp .env_example .env && nano .env && npm run build && pm2 start ecosystem.config.js && pm2 save && pm2 startup
 ```
+
+O `npm ci` já instala e compila o `sqlite3` (módulo nativo). O `nano .env`
+abre o editor no meio da cadeia — preencha as variáveis, salve e feche para
+os comandos seguintes continuarem. O `pm2 startup` imprime, no final, um
+comando `sudo env PATH=... pm2 startup ...`: copie e rode-o separadamente —
+é isso que faz o pm2 subir sozinho depois de um reboot do servidor.
 
 O agendamento é **interno** ao processo (node-cron), então o pm2 só precisa
 manter a aplicação viva — não use `cron_restart`, e não suba mais de uma
 instância: seriam ciclos duplicados, emails repetidos e escrita concorrente no
 SQLite. O `cwd` no [`ecosystem.config.js`](ecosystem.config.js) é o que garante
 que o `.env` e o `monitor_oportunidades.db` sejam encontrados.
+
+## Atualizando
+
+```bash
+git pull && npm ci && npm run build && pm2 restart alert-monitor && pm2 logs alert-monitor --lines 30
+```
+
+- `.env` e `monitor_oportunidades.db` são ignorados pelo git (veja
+  [`.gitignore`](.gitignore)), então credenciais e o histórico já coletado não
+  são afetados pelo `git pull`.
+- `dist/` também é ignorado pelo git — por isso o `npm run build` é sempre
+  necessário depois de um pull, mesmo em mudanças pequenas.
+- `npm ci` só é estritamente necessário quando `package.json` ou
+  `package-lock.json` mudaram; rodar sempre não tem custo real além de alguns
+  segundos a mais.
+- `pm2 restart` mata o processo atual e sobe o novo já com o código
+  atualizado; como o cron é interno, o restart dispara um ciclo de
+  verificação imediatamente e depois retoma o agendamento de 6 em 6 horas —
+  não é preciso rodar `pm2 save` de novo (isso só é necessário se o
+  [`ecosystem.config.js`](ecosystem.config.js) em si mudar).
 
 ## Estrutura
 
