@@ -44,7 +44,8 @@ npm start       # produção (node dist/index.js)
 ```
 
 O primeiro ciclo roda assim que o processo sobe; depois disso o cron assume
-(`0 */6 * * *`, fuso `America/Sao_Paulo`). Requer Node 18 ou superior.
+(`0 */6 * * *`, fuso `America/Sao_Paulo`). Requer Node 22.5 ou superior (usa o
+`node:sqlite` embutido — sem módulo nativo para compilar).
 
 ### Em produção com pm2 (primeira execução)
 
@@ -52,7 +53,9 @@ O primeiro ciclo roda assim que o processo sobe; depois disso o cron assume
 npm ci && cp .env_example .env && nano .env && npm run build && pm2 start ecosystem.config.js && pm2 save && pm2 startup
 ```
 
-O `npm ci` já instala e compila o `sqlite3` (módulo nativo). O `nano .env`
+O banco usa o `node:sqlite` embutido do próprio Node — não há módulo nativo
+para compilar, então `npm ci` é só instalação mesmo (requer Node 22.5+; em
+produção usamos Node 24, que já suporta sem flag nenhuma). O `nano .env`
 abre o editor no meio da cadeia — preencha as variáveis, salve e feche para
 os comandos seguintes continuarem. O `pm2 startup` imprime, no final, um
 comando `sudo env PATH=... pm2 startup ...`: copie e rode-o separadamente —

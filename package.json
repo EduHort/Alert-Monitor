@@ -14,7 +14,7 @@
     "url": "git+https://github.com/EduHort/Alert-Monitor.git"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   },
   "keywords": [],
   "author": "",
@@ -27,9 +27,7 @@
     "@google/genai": "^2.16.0",
     "dotenv": "^17.4.2",
     "node-cron": "^4.6.0",
-    "nodemailer": "^9.0.4",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1"
+    "nodemailer": "^9.0.4"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
