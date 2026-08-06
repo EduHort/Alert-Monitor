@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { GoogleGenAI, UrlRetrievalStatus } from '@google/genai';
 import { Fonte, ItemBruto } from './tipos';
 
-const GEMINI_MODEL = 'models/gemini-flash-latest';
+const GEMINI_MODEL = 'models/gemini-flash-lite-latest';
 const GEMINI_TIMEOUT_MS = 120_000; // Por tentativa: cada retentativa cria um sinal novo
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_CARACTERES_PAGINA = 100_000; // Corta páginas gigantes antes de mandar para a IA
