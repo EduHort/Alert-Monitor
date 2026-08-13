@@ -1,6 +1,10 @@
 import 'dotenv/config';
+import dns from 'node:dns/promises';
 import nodemailer, { Transporter } from 'nodemailer';
 import { Fonte, Oportunidade, Falha } from './tipos';
+
+const SMTP_HOST = 'smtp.gmail.com';
+const SMTP_PORT = 465;
 
 function lerListaEmails(nome: string): string[] {
     return (process.env[nome] ?? '').split(',').map(e => e.trim()).filter(Boolean);
@@ -9,23 +13,45 @@ function lerListaEmails(nome: string): string[] {
 export const EMAIL_CLIENTS = lerListaEmails('EMAIL_CLIENTS');
 export const EMAIL_ADMIN = lerListaEmails('EMAIL_ADMIN');
 
-// Criado sob demanda para que a validação do ambiente rode antes.
-let transporter: Transporter | null = null;
-function conexao(): Transporter {
-    if (!transporter) {
-        transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS,
-            },
-        });
+/**
+ * O nodemailer resolve os A e os AAAA do host e sorteia um endereço qualquer
+ * entre os dois. No servidor não há rota IPv6, então cada sorteio que caía num
+ * AAAA derrubava o envio com ENETUNREACH. Resolvemos só o IPv4 e passamos o IP
+ * pronto; o "servername" precisa vir junto porque, com host numérico, o
+ * nodemailer não deduz o nome para o SNI/certificado.
+ */
+async function hostIPv4(): Promise<{ host: string; servername?: string }> {
+    try {
+        const [ip] = await dns.resolve4(SMTP_HOST);
+        if (ip) return { host: ip, servername: SMTP_HOST };
+    } catch (error) {
+        console.warn(`⚠️ Falha ao resolver o IPv4 de ${SMTP_HOST}, usando o nome:`, error);
     }
-    return transporter;
+    return { host: SMTP_HOST };
+}
+
+// Criado sob demanda para que a validação do ambiente rode antes.
+// O IP é resolvido a cada conexão: o processo fica meses no ar e os
+// endereços do Gmail mudam.
+async function conexao(): Promise<Transporter> {
+    return nodemailer.createTransport({
+        ...(await hostIPv4()),
+        port: SMTP_PORT,
+        secure: true,
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
+    });
 }
 
 export async function verificarConexao(): Promise<void> {
-    await conexao().verify();
+    const transporter = await conexao();
+    try {
+        await transporter.verify();
+    } finally {
+        transporter.close();
+    }
 }
 
 function escaparHtml(valor: string | undefined | null): string {
@@ -114,9 +140,9 @@ function htmlDebugAdmin(oportunidades: Oportunidade[], falhas: Falha[]): string 
 }
 
 // --- ENVIO ---
-async function enviar(destinatarios: string[], assunto: string, html: string, rotulo: string): Promise<boolean> {
+async function enviar(transporter: Transporter, destinatarios: string[], assunto: string, html: string, rotulo: string): Promise<boolean> {
     try {
-        await conexao().sendMail({
+        await transporter.sendMail({
             from: `"Monitor de Editais" <${process.env.EMAIL_USER}>`,
             to: destinatarios,
             subject: assunto,
@@ -138,23 +164,30 @@ export async function enviarEmails(oportunidades: Oportunidade[], falhas: Falha[
     const temClientes = EMAIL_CLIENTS.length > 0;
     const temAdmin = EMAIL_ADMIN.length > 0;
 
-    const okClientes = temClientes && oportunidades.length > 0
-        ? await enviar(
-            EMAIL_CLIENTS,
-            '🔔 Novas Oportunidades Detectadas',
-            htmlResumoClientes(oportunidades),
-            'Resumo'
-        )
-        : true;
+    const transporter = await conexao();
+    try {
+        const okClientes = temClientes && oportunidades.length > 0
+            ? await enviar(
+                transporter,
+                EMAIL_CLIENTS,
+                '🔔 Novas Oportunidades Detectadas',
+                htmlResumoClientes(oportunidades),
+                'Resumo'
+            )
+            : true;
 
-    const okAdmin = temAdmin
-        ? await enviar(
-            EMAIL_ADMIN,
-            `🔧 DEBUG: ${oportunidades.length} Itens${falhas.length ? ` / ${falhas.length} falha(s)` : ''}`,
-            htmlDebugAdmin(oportunidades, falhas),
-            'Debug'
-        )
-        : true;
+        const okAdmin = temAdmin
+            ? await enviar(
+                transporter,
+                EMAIL_ADMIN,
+                `🔧 DEBUG: ${oportunidades.length} Itens${falhas.length ? ` / ${falhas.length} falha(s)` : ''}`,
+                htmlDebugAdmin(oportunidades, falhas),
+                'Debug'
+            )
+            : true;
 
-    return temClientes ? okClientes : okAdmin;
+        return temClientes ? okClientes : okAdmin;
+    } finally {
+        transporter.close();
+    }
 }
