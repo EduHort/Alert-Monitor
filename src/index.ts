@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { Fonte, Oportunidade, Falha } from './tipos';
 import { initDB, registrarItens, buscarPendentes, marcarNotificadas, limparAntigas } from './db';
 import { lerFonte, dormir } from './gemini';
+import { lerUndp } from './undp';
 import { enviarEmails, verificarConexao, EMAIL_CLIENTS, EMAIL_ADMIN } from './email';
 
 // --- CONFIGURAÇÃO ---
@@ -10,10 +11,10 @@ const CRON_EXPRESSION = '0 */6 * * *'; // A cada 6 horas
 const TIMEZONE = 'America/Sao_Paulo';
 
 /**
- * As fontes são consultadas uma de cada vez, com esta pausa entre elas.
- * Disparar as 6 juntas estourava a cota por minuto da API do Gemini e
- * derrubava várias (às vezes todas) com 429. O ciclo roda de 6 em 6 horas,
- * então demorar alguns minutos a mais não custa nada.
+ * As fontes que passam pela IA são consultadas uma de cada vez, com esta pausa
+ * entre elas. Disparar todas juntas estourava a cota por minuto da API do
+ * Gemini e derrubava várias (às vezes todas) com 429. O ciclo roda de 6 em 6
+ * horas, então demorar alguns minutos a mais não custa nada.
  */
 const PAUSA_ENTRE_FONTES_MS = 15_000;
 
@@ -51,18 +52,9 @@ const FONTES: Fonte[] = [
         nome: 'UNDP',
         url: 'https://parceiros.undp.org.br/opportunities',
         cor: '#27ae60', // Verde
-        // A listagem é renderizada por JavaScript (SPA Angular): o HTML servido vem vazio.
-        // Depende da IA conseguir renderizar a página antes de ler.
-        instrucao: `
-            A lista de oportunidades é uma TABELA carregada dinamicamente, com colunas de
-            título/descrição, localidade e data limite, e um paginador embaixo.
-            Liste as oportunidades da primeira página da tabela.
-            Os títulos costumam ter o formato "PCT BRA 25/005 – TR nº 003/2026 – SUPEN/MDA – Contratação de
-            Consultoria Especializada para ..." — use como "titulo" o título inteiro, sem cortar nada.
-            Use como "prazo" a data limite da oportunidade.
-            Se a tabela não carregar ou aparecer vazia, retorne [] — NÃO invente oportunidades
-            e NÃO use conhecimento prévio sobre o site.
-        `
+        // A listagem é renderizada por JavaScript (SPA Angular) e a IA nunca
+        // conseguiu ler a página. Lida direto pela API que a tabela consome.
+        ler: lerUndp
     },
     {
         nome: 'ICLEI Editais',
@@ -143,8 +135,14 @@ async function checkSites(): Promise<void> {
     try {
         console.log(`🤖 Consultando ${FONTES.length} fontes em sequência...`);
 
-        for (const [indice, fonte] of FONTES.entries()) {
-            if (indice > 0) await dormir(PAUSA_ENTRE_FONTES_MS);
+        let jaConsultouIA = false;
+
+        for (const fonte of FONTES) {
+            // A pausa serve para a cota do Gemini: quem tem leitor próprio não
+            // gasta cota e não precisa esperar a vez.
+            const usaIA = !fonte.ler;
+            if (usaIA && jaConsultouIA) await dormir(PAUSA_ENTRE_FONTES_MS);
+            jaConsultouIA ||= usaIA;
 
             try {
                 const itens = await lerFonte(fonte);

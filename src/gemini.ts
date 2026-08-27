@@ -55,7 +55,7 @@ const INSTRUCAO_JSON = `
 function montarPrompt(fonte: Fonte): string {
     return `
         Acesse: ${fonte.url}
-        ${fonte.instrucao.trim()}
+        ${(fonte.instrucao ?? '').trim()}
         Caso não haja nada, retorne [].
         NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
         ${INSTRUCAO_JSON}
@@ -66,7 +66,7 @@ function montarPromptComTexto(fonte: Fonte, texto: string): string {
     return `
         Abaixo, depois de "CONTEÚDO DA PÁGINA", está o texto extraído de ${fonte.url}.
         Analise SOMENTE esse texto — não use conhecimento prévio sobre o site.
-        ${fonte.instrucao.trim()}
+        ${(fonte.instrucao ?? '').trim()}
         Caso não haja nada, retorne [].
         NÃO retorne mensagens dizendo "não há nada listado", ou parecido.
         ${INSTRUCAO_JSON}
@@ -141,8 +141,9 @@ function extrairJson(text: string): ItemBruto[] {
 
 /**
  * Lê uma fonte, repetindo com espera longa em erro transitório.
- * Sites que bloqueiam o buscador do Google têm o HTML baixado aqui e mandado
- * como texto; o resto vai pelo urlContext.
+ * Fontes com leitor próprio passam longe da IA; sites que bloqueiam o buscador
+ * do Google têm o HTML baixado aqui e mandado como texto; o resto vai pelo
+ * urlContext. A repetição vale para os três casos.
  */
 export async function lerFonte(fonte: Fonte): Promise<ItemBruto[]> {
     let ultimoErro: unknown;
@@ -167,6 +168,7 @@ export async function lerFonte(fonte: Fonte): Promise<ItemBruto[]> {
 }
 
 async function lerFonteUmaVez(fonte: Fonte): Promise<ItemBruto[]> {
+    if (fonte.ler) return fonte.ler();
     if (fonte.baixarHtml) {
         const texto = await baixarTexto(fonte.url);
         return consultarGemini(montarPromptComTexto(fonte, texto), false);
