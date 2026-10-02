@@ -83,11 +83,23 @@ const CABECALHOS_NAVEGADOR = {
     'Accept-Language': 'pt-BR,pt;q=0.9'
 };
 
-async function baixarTexto(url: string): Promise<string> {
-    const resposta = await fetch(url, {
-        headers: CABECALHOS_NAVEGADOR,
+async function baixar(url: string, cookie?: string): Promise<Response> {
+    return fetch(url, {
+        headers: cookie ? { ...CABECALHOS_NAVEGADOR, 'Cookie': cookie } : CABECALHOS_NAVEGADOR,
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
+}
+
+async function baixarTexto(url: string): Promise<string> {
+    let resposta = await baixar(url);
+
+    // Alguns sites (ex: ICLEI) respondem 409 com um script que só grava um
+    // cookie e recarrega a página. Um navegador passa sem perceber; aqui o
+    // cookie é lido da resposta e a requisição repetida.
+    if (resposta.status === 409) {
+        const desafio = /document\.cookie\s*=\s*["']([^"';]+)/.exec(await resposta.text());
+        if (desafio) resposta = await baixar(url, desafio[1]);
+    }
 
     if (!resposta.ok) throw new Error(`o site respondeu HTTP ${resposta.status}`);
 

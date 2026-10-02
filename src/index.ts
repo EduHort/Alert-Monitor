@@ -67,7 +67,9 @@ const FONTES: Fonte[] = [
             Use como "titulo" o título do edital e como "prazo" APENAS a data, sem a frase em volta
             (do exemplo acima, o prazo seria "26 de Julho de 2026, às 23h59").
             Ignore os links para os PDFs de termo de referência.
-        `
+        `,
+        // O site barra o buscador do Google (urlContext) com um desafio de cookie.
+        baixarHtml: true
     },
     {
         nome: 'ICLEI Carreira',
@@ -79,7 +81,9 @@ const FONTES: Fonte[] = [
             Cada item tem título, descrição, prazo (ex: "30 de julho de 2026, às 23h59 (GMT-3)"),
             localidade, tipo de contratação e modalidade.
             Use como "titulo" o título da oportunidade e como "prazo" a data de encerramento das inscrições.
-        `
+        `,
+        // O site barra o buscador do Google (urlContext) com um desafio de cookie.
+        baixarHtml: true
     },
     {
         nome: 'WRI',
