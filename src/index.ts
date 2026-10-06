@@ -31,7 +31,9 @@ const FONTES: Fonte[] = [
             "Processo Seletivo Simplificado para Pesquisadores Internacionais IPEA/PIPA").
             Use como "prazo" o Prazo de inscrição inteiro, com as duas datas (ex: "09/07/2026 a 27/07/2026").
             Alguns itens ABERTA não têm prazo publicado: nesse caso devolva "prazo": "".
-        `
+        `,
+        // O urlContext recebe URL_RETRIEVAL_STATUS_ERROR neste site, mas um GET normal funciona.
+        baixarHtml: true
     },
     {
         nome: 'FNP',
