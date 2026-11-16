@@ -24,13 +24,13 @@
   },
   "homepage": "https://github.com/EduHort/Alert-Monitor#readme",
   "dependencies": {
-    "@google/genai": "^2.26.0",
-    "dotenv": "^18.0.5",
+    "@google/genai": "^3.3.0",
+    "dotenv": "^18.0.10",
     "node-cron": "^4.6.0",
-    "nodemailer": "^10.0.13"
+    "nodemailer": "^10.6.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.2",
     "ts-node": "^10.9.2",

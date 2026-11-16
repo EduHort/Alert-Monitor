@@ -2,7 +2,13 @@ import 'dotenv/config';
 import { GoogleGenAI, UrlRetrievalStatus } from '@google/genai';
 import { Fonte, ItemBruto } from './tipos';
 
-const GEMINI_MODEL = 'models/gemini-flash-lite-latest';
+// Cota do Hydrogen no plano gratuito: 5 RPM e 20 RPD. O ciclo faz 5 chamadas
+// por execução, então a primeira tentativa usa o Hydrogen e a repetição vai
+// para o modelo reserva, que tem cota própria e não gasta a do Hydrogen.
+// O reserva NÃO pode ser o gemini-3.5-flash-lite: ele falha o urlContext
+// (URL_RETRIEVAL_STATUS_ERROR) em fontes como a FNP. O alias abaixo funciona.
+const MODELO_PRINCIPAL = 'gemini-4-hydrogen';
+const MODELO_RESERVA = 'gemini-flash-lite-latest';
 const GEMINI_TIMEOUT_MS = 120_000; // Por tentativa: cada retentativa cria um sinal novo
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_CARACTERES_PAGINA = 100_000; // Corta páginas gigantes antes de mandar para a IA
@@ -19,7 +25,9 @@ const ESPERA_BASE_MS = 60_000;   // Espera antes de repetir: 60s
  */
 let cliente: GoogleGenAI | null = null;
 function ia(): GoogleGenAI {
-    if (!cliente) cliente = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    // A v3 do SDK passou a usar a API v1 por padrão. Fica na v1beta porque
+    // modelos novos/preview (e os aliases *-latest) podem existir só nela.
+    if (!cliente) cliente = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, apiVersion: 'v1beta' });
     return cliente;
 }
 
@@ -162,14 +170,15 @@ export async function lerFonte(fonte: Fonte): Promise<ItemBruto[]> {
 
     for (let tentativa = 1; tentativa <= TENTATIVAS; tentativa++) {
         try {
-            return await lerFonteUmaVez(fonte);
+            const modelo = tentativa === 1 ? MODELO_PRINCIPAL : MODELO_RESERVA;
+            return await lerFonteUmaVez(fonte, modelo);
         } catch (erro) {
             ultimoErro = erro;
             if (tentativa === TENTATIVAS || !ehTransitorio(erro)) break;
 
             const espera = ESPERA_BASE_MS * tentativa;
             console.warn(
-                `⏳ [${fonte.nome}] ${mensagemDoErro(erro)} — repetindo em ${espera / 1000}s ` +
+                `⏳ [${fonte.nome}] ${mensagemDoErro(erro)} — repetindo com ${MODELO_RESERVA} em ${espera / 1000}s ` +
                 `(tentativa ${tentativa + 1} de ${TENTATIVAS})`
             );
             await dormir(espera);
@@ -179,19 +188,19 @@ export async function lerFonte(fonte: Fonte): Promise<ItemBruto[]> {
     throw ultimoErro;
 }
 
-async function lerFonteUmaVez(fonte: Fonte): Promise<ItemBruto[]> {
+async function lerFonteUmaVez(fonte: Fonte, modelo: string): Promise<ItemBruto[]> {
     if (fonte.ler) return fonte.ler();
     if (fonte.baixarHtml) {
         const texto = await baixarTexto(fonte.url);
-        return consultarGemini(montarPromptComTexto(fonte, texto), false);
+        return consultarGemini(modelo, montarPromptComTexto(fonte, texto), false);
     }
-    return consultarGemini(montarPrompt(fonte), true);
+    return consultarGemini(modelo, montarPrompt(fonte), true);
 }
 
 // Erros sobem para o chamador: falha de fonte precisa ser reportada, não virar lista vazia.
-async function consultarGemini(prompt: string, usarUrlContext: boolean): Promise<ItemBruto[]> {
+async function consultarGemini(modelo: string, prompt: string, usarUrlContext: boolean): Promise<ItemBruto[]> {
     const response = await ia().models.generateContent({
-        model: GEMINI_MODEL,
+        model: modelo,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
             abortSignal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
